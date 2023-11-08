@@ -17,7 +17,7 @@ import torch
 
 # -----------------------------------------------------------------------------
 
-def bytes_to_unicode():
+def bytes_to_unicode() -> dict[int, str]:
     """
     Every possible byte (really an integer 0..255) gets mapped by OpenAI to a unicode
     character that represents it visually. Some bytes have their appearance preserved
@@ -48,7 +48,7 @@ def bytes_to_unicode():
     d = dict(zip(bs, cs))
     return d
 
-def get_pairs(word):
+def get_pairs(word: tuple[str, ...]) -> set[tuple[str, str]]:
     """
     Return all bigrams as a set of tuples, of consecutive elements in the iterable word.
     """
@@ -61,17 +61,49 @@ def get_pairs(word):
 
 class Encoder:
 
-    def __init__(self, encoder, bpe_merges):
+    def __init__(self, encoder: dict[str, int], bpe_merges: list[tuple[str, str]]):
         # byte encoder/decoder
         self.byte_encoder = bytes_to_unicode()
+        """
+        A dictionary that maps bytes (0x00 to 0xFF) to printable characters.
+        ```
+        byte_encoder = {
+            \x00: "Ā",
+            ...
+            \x20: "Ġ",
+            \x21: "!",
+            ...
+            \x41: "A",
+            ...
+            \x61: "a",
+            ...
+        }
+        ```
+        """
         self.byte_decoder = {v:k for k, v in self.byte_encoder.items()}
+        """
+        The inverse of byte_encoder
+        """
         # bpe token encoder/decoder
         self.encoder = encoder
         self.decoder = {v:k for k,v in self.encoder.items()}
         # bpe merge list that defines the bpe "tree", of tuples (a,b) that are to merge to token ab
         self.bpe_ranks = dict(zip(bpe_merges, range(len(bpe_merges))))
+        """
+        A pre-trained dictionary mapping token pairs to ranks for comparison.
+        ```
+        bpe_ranks = {
+            ('Ġ', 't'): 0,
+            ('Ġ', 'a'): 1,
+            ...
+            ('Ġinform', 'ants'): 49998,
+            ('Ġg', 'azed'): 49999,
+        }
+        ```
+        """
         # the splitting pattern used for pre-tokenization
         # Should haved added re.IGNORECASE so BPE merges can happen for capitalized versions of contractions <-- original openai comment
+        self.pat = re.compile(r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
         """
         ok so what is this regex looking for, exactly?
         python re reference: https://docs.python.org/3/library/re.html
@@ -89,10 +121,10 @@ class Encoder:
         - we are special casing a few common apostrophe constructs ('s, 't, 're, ...) and making those into separate tokens
         - we then separate out strings into consecutive chunks of 1) letters, 2) numbers, 3) non-letter-numbers, 4) whitespaces
         """
-        self.pat = re.compile(r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
+
         self.cache = {}
 
-    def bpe(self, token):
+    def bpe(self, token: str):
         """
         this function uses self.bpe_ranks to iteratively merge all the possible bpe tokens
         up the tree. token is a string of one individual 'word' (after regex tokenization)
@@ -158,11 +190,16 @@ class Encoder:
         self.cache[token] = word
         return word
 
-    def encode(self, text):
-        """ string goes in, list of integers comes out """
+    def encode(self, text: str):
+        """
+        String goes in, list of integers comes out
+
+        Non-ascii characters use more than one byte in UTF-8, so they'll end up
+        being several characters long.
+        """
         bpe_idx = []
         # pre-tokenize the input text into string tokens (words, roughly speaking)
-        tokens = re.findall(self.pat, text)
+        tokens: list[str] = re.findall(self.pat, text)
         # process each token into BPE integers
         for token in tokens:
             # encode the token as a bytes (b'') object
@@ -234,7 +271,7 @@ def get_encoder():
     encoder_remote_file = 'https://openaipublic.blob.core.windows.net/gpt-2/models/124M/encoder.json'
     get_file(encoder_local_file, encoder_remote_file)
     with open(encoder_local_file, 'r') as f:
-        encoder = json.load(f)
+        encoder: dict[str, int] = json.load(f)
     assert len(encoder) == 50257 # 256 individual byte tokens, 50,000 merged tokens, and 1 special <|endoftext|> token
 
     # load vocab.bpe that contains the bpe merges, i.e. the bpe tree structure
