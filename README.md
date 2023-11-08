@@ -1,3 +1,16 @@
+# Tracy's minGPT
+
+This is just my fork of minGPT for my fun; nothing to see here. You are probably looking for https://github.com/karpathy/minGPT.
+
+To play with _this specific_ repo, run:
+```
+python -m venv venv
+source venv/bin/activate
+pip install -e .[streamlit]
+streamlit run app/Home.py
+```
+
+---
 
 # minGPT
 

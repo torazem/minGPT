@@ -12,4 +12,7 @@ setup(name='minGPT',
             'requests',
             'transformers[torch]',
       ],
+      extras_require={
+            "streamlit": ['streamlit'],
+      },
 )

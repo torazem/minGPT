@@ -124,6 +124,72 @@ class Encoder:
 
         self.cache = {}
 
+    def bpe_and_show_work(self, token: str):
+        """
+        this function uses self.bpe_ranks to iteratively merge all the possible bpe tokens
+        up the tree. token is a string of one individual 'word' (after regex tokenization)
+        and after byte encoding, e.g. 'Ġthere'.
+        """
+        # token is a string of one individual 'word', after byte encoding, e.g. 'Ġthere'
+
+        words_and_pairs = []
+
+        word = tuple(token) # individual characters that make up the token, in a tuple
+        pairs = get_pairs(word) # get all bigrams
+        words_and_pairs.append({"word": word, "pairs": pairs, "bigram": None})
+
+        if not pairs:
+            return token, words_and_pairs
+
+        while True:
+            # find the next lowest rank bigram that can be merged
+            bigram = min(pairs, key = lambda pair: self.bpe_ranks.get(pair, float('inf')))
+            words_and_pairs[-1]["bigram"] = bigram
+            if bigram not in self.bpe_ranks:
+                break # no more bigrams are eligible to be merged
+            first, second = bigram
+
+            # we will now replace all occurences of (first, second) in the list of current
+            # words into one merged token first_second, in the output list new_words
+            new_word = []
+            i = 0
+            while i < len(word):
+
+                # find the next occurence of first in the sequence of current words
+                try:
+                    j = word.index(first, i)
+                    new_word.extend(word[i:j])
+                    i = j
+                except:
+                    new_word.extend(word[i:])
+                    break
+
+                # if this occurence is also followed by second, then merge them into one
+                if word[i] == first and i < len(word)-1 and word[i+1] == second:
+                    new_word.append(first+second)
+                    i += 2
+                else:
+                    new_word.append(word[i])
+                    i += 1
+
+            # all occurences of (first, second) have been merged to first_second
+            new_word = tuple(new_word)
+            word = new_word
+            if len(word) == 1:
+                words_and_pairs.append({"word": word, "pairs": None, "bigram": None})
+                break
+            else:
+                pairs = get_pairs(word)
+                words_and_pairs.append({"word": word, "pairs": pairs, "bigram": None})
+
+
+        # concat all words into a string, and use ' ' as the separator. Note that
+        # by now all characters have been byte encoded, guaranteeing that ' ' is
+        # not used in the actual data and is a 'special' delimiter character
+        word = ' '.join(word)
+
+        return word, words_and_pairs
+
     def bpe(self, token: str):
         """
         this function uses self.bpe_ranks to iteratively merge all the possible bpe tokens
