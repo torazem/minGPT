@@ -17,6 +17,9 @@ from torch.nn import functional as F
 from mingpt.utils import CfgNode as CN
 
 # -----------------------------------------------------------------------------
+def noop(*args, **kwargs):
+    pass
+
 
 class NewGELU(nn.Module):
     """
@@ -51,27 +54,102 @@ class CausalSelfAttention(nn.Module):
         self.n_head = config.n_head
         self.n_embd = config.n_embd
 
-    def forward(self, x):
+    def forward(self, x, print_func=noop, print_repr_func=noop, print_code_func=noop):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
+
+        print_func("""
+            ### Input
+            The input $\mathbf{x}$ starts off with shape $(n_\\text{batch}, n_\\text{tokens}, d_\\text{model})$.
+        """)
+        print_repr_func("x.shape", x.shape)
 
         # calculate query, key, values for all heads in batch and move head forward to be the batch dim
         # (B, T, C) -> (B, T, 3*C) -> 3*(B, T, C)
+        print_func("""
+            ### Multi-head split
+        """)
+        print_code_func("""
+            q, k ,v  = self.c_attn(x).split(self.n_embd, dim=2)
+        """)
         q, k ,v  = self.c_attn(x).split(self.n_embd, dim=2)
+
+        print_func("""
+            The output of the linear layer `c_attn` is $(n_\\text{batch}, n_\\text{tokens}, 3 d_\\text{model})$.
+        """)
+        print_repr_func("self.c_attn(x).shape", self.c_attn(x).shape)
+
+        print_func("""
+            The `split` method then returns a tuple of tensors chunked by `self.n_embd` (which is $d_\\text{model}$).
+            This results in three tensors of shape $(n_\\text{batch}, n_\\text{tokens}, d_\\text{model})$
+        """)
+        print_repr_func("(q.shape, k.shape, v.shape)", (q.shape, k.shape, v.shape))
+
         # (B, T, C) -> (B, T, nh, hs) -> (B, nh, T, hs)
+        print_code_func("""
+            k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+            q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+            v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        """)
+        print_func("""
+            In PyTorch, `view()` is basically `reshape()`. This step reshapes each of $Q$, $K$ and $V$
+            into the different heads.
+        """)
+        print_repr_func("(B, T, self.n_head, C // self.n_head)", (B, T, self.n_head, C // self.n_head))
+        print_func("""
+            The `transpose` swaps the second and third dimensions so that matrix multiplication
+            can happen on the last two dimensions.
+        """)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
+        print_repr_func("(q.shape, k.shape, v.shape)", (q.shape, k.shape, v.shape))
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        print_func("""
+            ### Masked dot-product attention
+        """)
+        print_code_func("""
+            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        """)
+        print_repr_func("k.transpose(-2, -1).shape", k.transpose(-2, -1).shape)
+        print_repr_func("(q @ k.transpose(-2, -1)).shape", (q @ k.transpose(-2, -1)).shape)
+        print_repr_func("k.size(-1)", k.size(-1))
         att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        print_repr_func("att.shape", att.shape)
+
+        print_code_func("""
+            att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        """)
         att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        print_repr_func("att.shape", att.shape)
+        print_code_func("""
+            att = F.softmax(att, dim=-1)
+        """)
         att = F.softmax(att, dim=-1)
+        print_repr_func("att.shape", att.shape)
         att = self.attn_dropout(att)
+        print_code_func("""
+            att = self.attn_dropout(att)
+            y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        """)
         y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        print_repr_func("y.shape", y.shape)
+        print_func("""
+            ### Concatenate heads
+        """)
+        print_code_func("""
+            y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+        """)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
+        print_repr_func("y.shape", y.shape)
 
         # output projection
+        print_func(self.resid_dropout)
+        print_code_func("""
+            y = self.resid_dropout(self.c_proj(y))
+        """)
         y = self.resid_dropout(self.c_proj(y))
+        print_repr_func("y.shape", y.shape)
         return y
 
 class Block(nn.Module):
@@ -264,7 +342,7 @@ class GPT(nn.Module):
     def forward(self, idx, targets=None):
         device = idx.device
         b, t = idx.size()  # batch size, sequence length
-        assert t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
+        torch._assert(t <= self.block_size, f"Cannot forward sequence of length {t}, block size is only {self.block_size}")
         pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(0) # shape (1, t)
 
         # forward the GPT model itself
